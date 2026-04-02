@@ -112,5 +112,8 @@ def main():
     server.serve_forever()
 
 
+# TODO: create an endpoint that accepts survey...
+# TODO: make a shortcut on iphone that only has one menu pick which habit to add...
+
 if __name__ == "__main__":
     main()

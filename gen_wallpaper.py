@@ -42,6 +42,7 @@ HABITS = [ # this should be pulled from the spreadsheet
     {"name": "POST A CLASH VIDEO", "type": "do"},
     {"name": "CALL ROBERT", "type": "do"},
     {"name": "CALL ABRAHAM", "type": "do"},
+    {"name": "BH", "type": "do"}, # BH stands for bad habits
     {"name": "TASKS DONE",   "type": "count"},
 ]
 
@@ -87,15 +88,17 @@ FILL_STEP   = FILL_D + FILL_GAP
 
 # --- Image overlay ---
 # OVERLAY_IMAGE   = "images/ippo_above_punchingbag.png"  # path to your image
-OVERLAY_IMAGE   = "images/ippo_front_punchingbag.png"  # path to your image
+OVERLAY_IMAGE_PATHS   = ["images/ippo_side_punchingbag.png",
+#  "images/ippo_above_punchingbag.png",
+ "images/ippo_front_punchingbag.png"]  # path to your image
 # OVERLAY_IMAGE   = "images/ippo_front_punchingbag.png"  # path to your image
 OVERLAY_SIZE    = (250, 250)    # (width, height) on the wallpaper
-OVERLAY_POS     = (int(WIDTH / 2 - 125), (HEIGHT / 8) * 7)    # (x, y) top-left corner on the wallpaper
-print(OVERLAY_POS)
+OVERLAY_POS1     = (int(WIDTH / 2 - 125), int(HEIGHT / 8) * 7)    # (x, y) top-left corner on the wallpaper
+OVERLAY_POS2     = ((WIDTH / 2 - 282.5), (WIDTH / 2 + 37.5), int(HEIGHT / 8) * 7)    # (x1, x2, y) top-left corner on the wallpaper
 OVERLAY_CROP    = None          # None = no crop, or (left, top, right, bottom) in source pixels
                                 # e.g. (100, 50, 600, 550) crops a 500x500 region
 OVERLAY_ROUND   = 30            # corner radius (0 = square, 125 = circle for 250x250)
-OVERLAY_OPACITY = 0           # 0-255 (255 = fully opaque)
+OVERLAY_OPACITY = 255           # 0-255 (255 = fully opaque)
 
 
 # =============================================================================
@@ -293,39 +296,51 @@ def fetch_google_tasks_today(creds):
 # IMAGE OVERLAY
 # =============================================================================
 
+def _cover_crop(img, target_w, target_h):
+    """Resize + center-crop to exactly fill target_w x target_h (no distortion)."""
+    src_w, src_h = img.size
+    scale = max(target_w / src_w, target_h / src_h)
+    new_w = int(src_w * scale)
+    new_h = int(src_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    
+    # Center crop to target
+    left = (new_w - target_w) // 2
+    top = (new_h - target_h) // 2
+    return img.crop((left, top, left + target_w, top + target_h))
+
 def load_overlay():
-    """Load, crop, resize, and optionally round-corner the overlay image."""
-    path = Path(OVERLAY_IMAGE)
-    print("img")
-    if not path.exists():
-        return None
+    images = []
+    for p in OVERLAY_IMAGE_PATHS:
+        path = Path(p)
+        if not path.exists():
+            continue
 
-    img = Image.open(path).convert("RGBA")
+        img = Image.open(path).convert("RGBA")
 
-    # Crop (in source image pixels)
-    print("OVERLAY_CROP")
-    if OVERLAY_CROP:
-        img = img.crop(OVERLAY_CROP)
+        # Crop source region first if specified
+        if OVERLAY_CROP:
+            img = OVERLAY_CROP
 
-    # Resize to target size
-    img = img.resize(OVERLAY_SIZE, Image.LANCZOS)
-    print(img)
-    # Round corners
-    if OVERLAY_ROUND > 0:
-        w, h = img.size
-        mask = Image.new("L", (w, h), 0)
-        mask_draw = ImageDraw.Draw(mask)
-        mask_draw.rounded_rectangle([0, 0, w, h], radius=OVERLAY_ROUND, fill=255)
-        img.putalpha(mask)
+        # Cover-crop to target size (no distortion, no letterboxing)
+        img = _cover_crop(img, OVERLAY_SIZE[0], OVERLAY_SIZE[1])
 
-    # Apply opacity
-    if OVERLAY_OPACITY < 255:
-        alpha = img.split()[3]
-        alpha = alpha.point(lambda p: int(p * OVERLAY_OPACITY / 255))
-        img.putalpha(alpha)
+        # Round corners
+        if OVERLAY_ROUND > 0:
+            w, h = img.size
+            mask = Image.new("L", (w, h), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=OVERLAY_ROUND, fill=255)
+            img.putalpha(mask)
 
-    return img
+        # Opacity
+        if OVERLAY_OPACITY < 255:
+            alpha = img.split()[3]
+            alpha = alpha.point(lambda a: int(a * OVERLAY_OPACITY / 255))
+            img.putalpha(alpha)
 
+        images.append(img)
+
+    return images
 
 # =============================================================================
 # RENDERING
@@ -376,10 +391,21 @@ def render(habit_data, now=None):
 
     # --- Image overlay ---
     overlay = load_overlay()
-    if overlay:
-        img.paste(overlay, (int(OVERLAY_POS[0]), int(OVERLAY_POS[1])), overlay)
-        draw = ImageDraw.Draw(img)  # refresh draw after paste
-
+    if all(overlay):
+        if len(overlay) < 2:
+            img.paste(overlay, (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay)
+            draw = ImageDraw.Draw(img)  # refresh draw after paste
+        elif len(overlay) == 2:
+            print("here")
+            img.paste(overlay[0], (int(OVERLAY_POS2[0]), int(OVERLAY_POS2[2])), overlay[0])
+            img.paste(overlay[1], (int(OVERLAY_POS2[1]), int(OVERLAY_POS2[2])), overlay[1])
+            draw = ImageDraw.Draw(img)  # refresh draw after paste
+        elif len(overlay) == 3:
+            img.paste(overlay[0], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[0])
+            img.paste(overlay[1], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[1])
+            img.paste(overlay[2], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[2])
+            draw = ImageDraw.Draw(img)  # refresh draw after paste
+    print(overlay)
     # --- Dates ---
     today = now.date()
     dates = [today - timedelta(days=LOOKBACK_DAYS - 1 - i) for i in range(LOOKBACK_DAYS)]
@@ -451,6 +477,8 @@ def render(habit_data, now=None):
     ax = last_right - (bb_a[2] / 2) + lx / 2
     print(ax)
     draw.text((ax, y), attr, fill=QUOTE_ATTR, font=FONT_ATTR)
+
+
 
     # --- Footer ---
     yday = now.timetuple().tm_yday
