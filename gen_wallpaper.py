@@ -4,16 +4,8 @@ Habit Wallpaper Generator
 Generates an iPhone lock screen wallpaper with a dot-grid habit tracker.
 
 Usage:
-  python habit_wallpaper.py --mock          # test with random data
-  python habit_wallpaper.py                 # pull from Google Sheets + Tasks
-
-Setup (for real data):
-  1. pip install Pillow google-api-python-client google-auth-oauthlib
-  2. Google Cloud project → enable Sheets + Tasks APIs → download credentials.json
-  3. Google Sheet layout:
-     Row 1: Date | Wrap Tfillin | Gym | Read 2 Pages | LeetCode | Tasks Done
-     Row 2: 2026-03-18 | 1 | 0 | 1 | 1 | 3
-  4. Set SPREADSHEET_ID below
+  python gen_wallpaper.py --mock          # test with random data
+  python gen_wallpaper.py                 # pull from Google Sheets + Tasks
 """
 
 import os
@@ -29,11 +21,7 @@ from PIL import Image, ImageDraw, ImageFont
 # CONFIG
 # =============================================================================
 
-SPREADSHEET_ID = "YOUR_SPREADSHEET_ID_HERE"
-SHEET_NAME = "Habits"
-RANGE = f"{SHEET_NAME}!A:F"
-
-HABITS = [ # this should be pulled from the spreadsheet
+HABITS = [ # this shouldn't be here should be pulled from the spreadsheet
     {"name": "WRAP TFILLIN", "type": "do"},
     {"name": "GYM",          "type": "do"},
     {"name": "READ 2 PAGES", "type": "do"},
@@ -80,6 +68,7 @@ GRID_TOP    = 600       # top of grid
 LABEL_GAP   = 60        # gap between labels
 ROW_GAP     = 25        # gap between rows
 
+
 # Filler dots
 FILL_R      = 12
 FILL_D      = FILL_R * 2
@@ -104,6 +93,7 @@ OVERLAY_OPACITY = 255           # 0-255 (255 = fully opaque)
 # =============================================================================
 # QUOTES
 # =============================================================================
+
 
 QUOTES = [
     # Ken 
@@ -152,6 +142,7 @@ QUOTES = [
     ("The last three or four reps is what makes the muscle grow.", "Arnold Schwarzenegger"),
     ("I don't count my sit-ups. I only start counting when it starts hurting.", "Muhammad Ali"),
 ]
+
 
 
 def get_daily_quote(now=None):
@@ -208,7 +199,7 @@ FONT_ATTR   = _font(32,  "regular")
 
 
 # =============================================================================
-# DATA
+# MOCK DATA
 # =============================================================================
 
 def generate_mock_data():
@@ -231,67 +222,6 @@ def generate_mock_data():
     return data
 
 
-def get_google_creds():
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-    SCOPES = [
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/tasks.readonly",
-    ]
-    token_path = Path(__file__).parent / "token.json"
-    creds_path = Path(__file__).parent / "credentials.json"
-    creds = None
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(creds_path), SCOPES)
-            creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
-    return creds
-
-
-def fetch_sheet_data(creds):
-    from googleapiclient.discovery import build
-    svc = build("sheets", "v4", credentials=creds)
-    result = svc.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID, range=RANGE
-    ).execute()
-    rows = result.get("values", [])
-    data = {}
-    for row in rows[1:]:
-        if len(row) < 2:
-            continue
-        vals = []
-        for i in range(1, len(HABITS) + 1):
-            try:
-                vals.append(int(row[i]) if i < len(row) else 0)
-            except (ValueError, TypeError):
-                vals.append(0)
-        data[row[0]] = vals
-    return data
-
-
-def fetch_google_tasks_today(creds):
-    from googleapiclient.discovery import build
-    svc = build("tasks", "v1", credentials=creds)
-    lists = svc.tasklists().list().execute().get("items", [])
-    today_rfc = datetime.now().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    count = 0
-    for tl in lists:
-        tasks = svc.tasks().list(
-            tasklist=tl["id"], showCompleted=True,
-            showHidden=True, completedMin=today_rfc,
-        ).execute().get("items", [])
-        count += sum(1 for t in tasks if t.get("status") == "completed")
-    return count
-
-
 # =============================================================================
 # IMAGE OVERLAY
 # =============================================================================
@@ -303,11 +233,10 @@ def _cover_crop(img, target_w, target_h):
     new_w = int(src_w * scale)
     new_h = int(src_h * scale)
     img = img.resize((new_w, new_h), Image.LANCZOS)
-    
-    # Center crop to target
     left = (new_w - target_w) // 2
     top = (new_h - target_h) // 2
     return img.crop((left, top, left + target_w, top + target_h))
+
 
 def load_overlay():
     images = []
@@ -318,21 +247,17 @@ def load_overlay():
 
         img = Image.open(path).convert("RGBA")
 
-        # Crop source region first if specified
         if OVERLAY_CROP:
-            img = OVERLAY_CROP
+            img = img.crop(OVERLAY_CROP)
 
-        # Cover-crop to target size (no distortion, no letterboxing)
         img = _cover_crop(img, OVERLAY_SIZE[0], OVERLAY_SIZE[1])
 
-        # Round corners
         if OVERLAY_ROUND > 0:
             w, h = img.size
             mask = Image.new("L", (w, h), 0)
             ImageDraw.Draw(mask).rounded_rectangle([0, 0, w, h], radius=OVERLAY_ROUND, fill=255)
             img.putalpha(mask)
 
-        # Opacity
         if OVERLAY_OPACITY < 255:
             alpha = img.split()[3]
             alpha = alpha.point(lambda a: int(a * OVERLAY_OPACITY / 255))
@@ -341,6 +266,7 @@ def load_overlay():
         images.append(img)
 
     return images
+
 
 # =============================================================================
 # RENDERING
@@ -364,7 +290,6 @@ def _center_x(draw, text, font):
 
 
 def _wrap_text(draw, text, font, max_width):
-    """Word-wrap text to fit within max_width pixels. Returns list of lines."""
     words = text.split()
     lines = []
     current = ""
@@ -385,32 +310,28 @@ def render(habit_data, now=None):
     if now is None:
         now = datetime.now()
 
-    # --- Background ---
     img = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(img)
 
     # --- Image overlay ---
     overlay = load_overlay()
-    if all(overlay):
-        if len(overlay) < 2:
-            img.paste(overlay, (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay)
-            draw = ImageDraw.Draw(img)  # refresh draw after paste
+    if overlay:
+        if len(overlay) == 1:
+            img.paste(overlay[0], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[0])
         elif len(overlay) == 2:
-            print("here")
             img.paste(overlay[0], (int(OVERLAY_POS2[0]), int(OVERLAY_POS2[2])), overlay[0])
             img.paste(overlay[1], (int(OVERLAY_POS2[1]), int(OVERLAY_POS2[2])), overlay[1])
-            draw = ImageDraw.Draw(img)  # refresh draw after paste
-        elif len(overlay) == 3:
+        elif len(overlay) >= 3:
             img.paste(overlay[0], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[0])
             img.paste(overlay[1], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[1])
             img.paste(overlay[2], (int(OVERLAY_POS1[0]), int(OVERLAY_POS1[1])), overlay[2])
-            draw = ImageDraw.Draw(img)  # refresh draw after paste
-    print(overlay)
+        draw = ImageDraw.Draw(img)
+
     # --- Dates ---
     today = now.date()
     dates = [today - timedelta(days=LOOKBACK_DAYS - 1 - i) for i in range(LOOKBACK_DAYS)]
     total_w = LOOKBACK_DAYS * DOT_D + (LOOKBACK_DAYS - 1) * DOT_GAP
-    x0 = (WIDTH - total_w) / 2 
+    x0 = (WIDTH - total_w) / 2
 
     # --- Habits ---
     y = GRID_TOP
@@ -456,11 +377,11 @@ def render(habit_data, now=None):
 
     y += 80  # space below day numbers
 
-    # Wrap and center the quote text
     lines = _wrap_text(draw, quote_text, FONT_QUOTE, max_quote_w)
     line_h = 48  # line height
 
     last_right = 0
+    lx = 0
     for line in lines:
         bb = draw.textbbox((0, 0), line, font=FONT_QUOTE)
         lw = bb[2] - bb[0]
@@ -469,16 +390,13 @@ def render(habit_data, now=None):
         last_right = lx + lw
         y += line_h
 
-    # Attribution — right edge aligned to last quote line's right edge
+    # Attribution
     y += 12
     attr = f"— {quote_source}"
-    
     bb_a = draw.textbbox((0, 0), attr, font=FONT_ATTR)
-    ax = last_right - (bb_a[2] / 2) + lx / 2
-    print(ax)
+    attr_w = bb_a[2] - bb_a[0]
+    ax = last_right - attr_w
     draw.text((ax, y), attr, fill=QUOTE_ATTR, font=FONT_ATTR)
-
-
 
     # --- Footer ---
     yday = now.timetuple().tm_yday
@@ -513,22 +431,11 @@ def main():
     now = datetime.now()
 
     if args.mock:
-        print("Mock data...")
         data = generate_mock_data()
     else:
-        print("Google auth...")
-        creds = get_google_creds()
-        print("Fetching sheets...")
-        data = fetch_sheet_data(creds)
-        print("Fetching tasks...")
-        tasks = fetch_google_tasks_today(creds)
-        key = now.strftime("%Y-%m-%d")
-        if key in data:
-            data[key][-1] = tasks
-        else:
-            data[key] = [-1] * (len(HABITS) - 1) + [tasks]
+        from google_data import fetch_all
+        data = fetch_all(HABITS)
 
-    print("Rendering...")
     img = render(data, now)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
