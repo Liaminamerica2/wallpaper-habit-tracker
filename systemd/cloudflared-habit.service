@@ -1,0 +1,32 @@
+# Cloudflare Tunnel for habit-wallpaper — install:
+#
+#   Ensure ~/.cloudflared/config.yml exists (tunnel + ingress to http://127.0.0.1:8080).
+#   Prefer this unit over "cloudflared service install" when credentials live under a
+#   normal user (not root).
+#
+#   sudo cp systemd/cloudflared-habit.service /etc/systemd/system/
+#   sudo sed -i 's/notroot/YOUR_LINUX_USER/g' /etc/systemd/system/cloudflared-habit.service
+#   sudo sed -i 's|ExecStart=.*|ExecStart=/usr/bin/cloudflared tunnel --config /home/notroot/.cloudflared/config.yml run|' /etc/systemd/system/cloudflared-habit.service
+#   (Or edit ExecStart: use `which cloudflared` for the binary path.)
+#
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now cloudflared-habit.service
+#
+# Start after the app so localhost:8080 is up:
+#   habit-wallpaper.service should be enabled first.
+
+[Unit]
+Description=Cloudflare Tunnel (habit wallpaper)
+After=network-online.target habit-wallpaper.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notroot
+Group=notroot
+ExecStart=/usr/bin/cloudflared tunnel --config /home/notroot/.cloudflared/config.yml run
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

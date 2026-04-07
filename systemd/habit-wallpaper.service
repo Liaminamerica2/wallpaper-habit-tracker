@@ -1,0 +1,30 @@
+# Habit tracker HTTP server — install:
+#
+#   sudo cp systemd/habit-wallpaper.service /etc/systemd/system/
+#   sudo sed -i 's/notroot/YOUR_LINUX_USER/g' /etc/systemd/system/habit-wallpaper.service
+#   sudo sed -i 's|/home/notroot/habit-tracker|/actual/path/to/habit-tracker|g' /etc/systemd/system/habit-wallpaper.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now habit-wallpaper.service
+#   sudo systemctl status habit-wallpaper.service
+#
+# Logs: journalctl -u habit-wallpaper.service -f
+
+[Unit]
+Description=Habit wallpaper HTTP server
+After=network.target
+
+[Service]
+Type=simple
+User=notroot
+Group=notroot
+WorkingDirectory=/home/notroot/habit-tracker
+ExecStart=/home/notroot/habit-tracker/venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+# Hardening (optional; drop if something breaks)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
