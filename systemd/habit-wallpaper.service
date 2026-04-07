@@ -18,6 +18,8 @@ Type=simple
 User=notroot
 Group=notroot
 WorkingDirectory=/home/notroot/habit-tracker
+# So print() / _log() show up in journalctl immediately (no pipe TTY buffering).
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/home/notroot/habit-tracker/venv/bin/python server.py
 Restart=always
 RestartSec=5
