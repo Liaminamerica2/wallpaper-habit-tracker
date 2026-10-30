@@ -15,11 +15,21 @@ import hashlib
 import textwrap
 from datetime import datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont
 
 # =============================================================================
 # CONFIG
 # =============================================================================
+
+# All habit dates, sheet "today", wallpaper "today", and Tasks "today" use this zone.
+HABIT_TZ = ZoneInfo("America/Los_Angeles")
+
+
+def habit_now():
+    """Current time in US Pacific (PST or PDT per daylight saving rules)."""
+    return datetime.now(HABIT_TZ)
+
 
 HABITS = [ # this shouldn't be here should be pulled from the spreadsheet
     {"name": "WRAP TFILLIN", "type": "do"},
@@ -76,11 +86,11 @@ FILL_GAP    = 5
 FILL_STEP   = FILL_D + FILL_GAP
 
 # --- Image overlay ---
-# OVERLAY_IMAGE   = "images/ippo_above_punchingbag.png"  # path to your image
-OVERLAY_IMAGE_PATHS   = ["images/ippo_side_punchingbag.png",
-#  "images/ippo_above_punchingbag.png",
- "images/ippo_front_punchingbag.png"]  # path to your image
-# OVERLAY_IMAGE   = "images/ippo_front_punchingbag.png"  # path to your image
+# Each calendar day (HABIT_TZ), pick up to OVERLAY_MAX_IMAGES files from OVERLAY_IMAGE_DIR
+# using a date-seeded shuffle so the wallpaper stays stable all day but changes daily.
+OVERLAY_IMAGE_DIR = Path(__file__).parent / "images"
+OVERLAY_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+OVERLAY_MAX_IMAGES = 2  # use 3 only if you want the triple-stack branch in render()
 OVERLAY_SIZE    = (250, 250)    # (width, height) on the wallpaper
 OVERLAY_POS1     = (int(WIDTH / 2 - 125), int(HEIGHT / 8) * 7)    # (x, y) top-left corner on the wallpaper
 OVERLAY_POS2     = ((WIDTH / 2 - 282.5), (WIDTH / 2 + 37.5), int(HEIGHT / 8) * 7)    # (x1, x2, y) top-left corner on the wallpaper
@@ -148,7 +158,7 @@ QUOTES = [
 def get_daily_quote(now=None):
     """Pick a quote deterministically based on the date so it stays stable all day."""
     if now is None:
-        now = datetime.now()
+        now = habit_now()
     day_key = now.strftime("%Y-%m-%d")
     h = int(hashlib.md5(day_key.encode()).hexdigest(), 16)
     return QUOTES[h % len(QUOTES)]
@@ -181,12 +191,25 @@ def _font(size, style="regular"):
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
         ],
     }
-    for p in paths.get(style, paths["regular"]):
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size)
-            except OSError:
-                continue
+    # If preferred style has no loadable file, fall back so we never use
+    # load_default() for body text (it ignores `size` and stays ~10px tall).
+    style_try = [style]
+    if style == "italic":
+        style_try.extend(["regular", "medium"])
+    elif style == "light":
+        style_try.append("regular")
+    elif style == "thin":
+        style_try.extend(["light", "regular"])
+    elif style == "medium":
+        style_try.append("regular")
+
+    for st in style_try:
+        for p in paths.get(st, paths["regular"]):
+            if os.path.exists(p):
+                try:
+                    return ImageFont.truetype(p, size)
+                except OSError:
+                    continue
     return ImageFont.load_default()
 
 
@@ -205,7 +228,7 @@ FONT_ATTR   = _font(32,  "regular")
 def generate_mock_data():
     random.seed(42)
     data = {}
-    today = datetime.now().date()
+    today = habit_now().date()
     for d in range(LOOKBACK_DAYS - 1, -1, -1):
         dt = today - timedelta(days=d)
         key = dt.strftime("%Y-%m-%d")
@@ -238,10 +261,30 @@ def _cover_crop(img, target_w, target_h):
     return img.crop((left, top, left + target_w, top + target_h))
 
 
-def load_overlay():
+def overlay_paths_for_today(now=None):
+    """Paths under OVERLAY_IMAGE_DIR to use today; empty if none match."""
+    if now is None:
+        now = habit_now()
+    if not OVERLAY_IMAGE_DIR.is_dir():
+        return []
+    candidates = [
+        p
+        for p in OVERLAY_IMAGE_DIR.iterdir()
+        if p.is_file() and p.suffix.lower() in OVERLAY_IMAGE_EXTS
+    ]
+    if not candidates:
+        return []
+    candidates.sort()
+    rng = random.Random(int(now.strftime("%Y%m%d")))
+    rng.shuffle(candidates)
+    return candidates[:OVERLAY_MAX_IMAGES]
+
+
+def load_overlay(paths=None):
+    if paths is None:
+        paths = overlay_paths_for_today()
     images = []
-    for p in OVERLAY_IMAGE_PATHS:
-        path = Path(p)
+    for path in paths:
         if not path.exists():
             continue
 
@@ -308,7 +351,7 @@ def _wrap_text(draw, text, font, max_width):
 
 def render(habit_data, now=None):
     if now is None:
-        now = datetime.now()
+        now = habit_now()
 
     img = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(img)
@@ -378,9 +421,11 @@ def render(habit_data, now=None):
     y += 80  # space below day numbers
 
     lines = _wrap_text(draw, quote_text, FONT_QUOTE, max_quote_w)
-    line_h = 48  # line height
+    bb_line = draw.textbbox((0, 0), "Mg", font=FONT_QUOTE)
+    line_h = (bb_line[3] - bb_line[1]) + 26
 
     last_right = 0
+    first_right = 0
     lx = 0
     for line in lines:
         bb = draw.textbbox((0, 0), line, font=FONT_QUOTE)
@@ -388,14 +433,16 @@ def render(habit_data, now=None):
         lx = (WIDTH - lw) / 2
         draw.text((lx, y), line, fill=QUOTE_COLOR, font=FONT_QUOTE)
         last_right = lx + lw
+        if first_right == 0:
+            first_right = lx + lw
         y += line_h
 
     # Attribution
-    y += 12
+    y += 22
     attr = f"— {quote_source}"
     bb_a = draw.textbbox((0, 0), attr, font=FONT_ATTR)
     attr_w = bb_a[2] - bb_a[0]
-    ax = last_right - attr_w
+    ax = first_right - attr_w
     draw.text((ax, y), attr, fill=QUOTE_ATTR, font=FONT_ATTR)
 
     # --- Footer ---
@@ -428,7 +475,7 @@ def main():
     parser.add_argument("--output", default=str(OUTPUT_PATH))
     args = parser.parse_args()
 
-    now = datetime.now()
+    now = habit_now()
 
     if args.mock:
         data = generate_mock_data()

@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 DO_PULL=1
@@ -20,7 +20,7 @@ done
 HABIT_UNIT="${HABIT_UNIT:-habit-wallpaper.service}"
 TUNNEL_UNIT="${TUNNEL_UNIT:-cloudflared-habit.service}"
 
-if [[ "$DO_PULL" -eq 1 && -d .git ]]; then
+if [ "$DO_PULL" -eq 1 ] && [ -d .git ]; then
   git pull --ff-only
 fi
 
@@ -28,4 +28,8 @@ sudo systemctl restart "$HABIT_UNIT"
 sudo systemctl restart "$TUNNEL_UNIT"
 
 sudo systemctl --no-pager --lines=0 status "$HABIT_UNIT" "$TUNNEL_UNIT" || true
-echo "OK — logs: journalctl -u $HABIT_UNIT -u $TUNNEL_UNIT -f"
+echo ""
+echo "=== Last 100 log lines ($HABIT_UNIT) ==="
+sudo journalctl -u "$HABIT_UNIT" -n 100 --no-pager
+echo ""
+echo "OK — follow live: journalctl -u $HABIT_UNIT -f"

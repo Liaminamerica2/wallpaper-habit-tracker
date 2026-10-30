@@ -2,6 +2,9 @@
 credentials.json
 token.json
 
+# Server API key (copy from .env.example)
+.env
+
 # Python
 __pycache__/
 *.py[cod]

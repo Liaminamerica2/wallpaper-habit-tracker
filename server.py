@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-# TODO: add a key.
 """
 Habit Wallpaper Server
 
 Endpoints:
   GET  /              → returns wallpaper PNG
-  GET  /mark?h=GYM    → marks habit as done for today, returns JSON
+  GET  /mark?h=GYM    → toggles habit for today (0↔1), returns JSON
   GET  /habits        → lists available habit names, returns JSON
+
+When HABIT_SERVER_API_KEY is set (e.g. in .env — see .env.example), /mark requires
+the same value as query param ?key=... or header X-Api-Key.
 
 Usage:
   python server.py                    # starts on port 8080
@@ -20,27 +22,49 @@ Public HTTPS without opening your router (Cloudflare Tunnel):
 
 Apple Shortcut for marking habits:
   1. Action: "Get Contents of URL"
-  2. URL: https://habits.example.com/mark?h=GYM  (or http://LAN_IP:8080/…)
+  2. URL: https://habits.example.com/mark?h=GYM&key=YOUR_KEY  (or http://LAN_IP:8080/…)
   3. Done — one tap per habit
 """
 
+import argparse
+import importlib
 import io
 import json
-import importlib
-import argparse
+import logging
+import os
+import secrets
 import time
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
 from urllib.parse import urlparse, parse_qs
+
+from dotenv import load_dotenv
 
 import gen_wallpaper
 
+load_dotenv()
 MOCK = False
+API_KEY = os.environ.get("HABIT_SERVER_API_KEY", "").strip()
+
+
+def _configure_logging():
+    """Root logger at DEBUG. Use force=True so a pre-existing root handler can't block our config."""
+    kwargs = dict(
+        level=logging.DEBUG,
+        format="%(asctime)s.%(msecs)03d [%(name)s] %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    try:
+        logging.basicConfig(**kwargs, force=True)
+    except TypeError:
+        # Python < 3.8: no force=
+        logging.basicConfig(**kwargs)
 
 
 def _log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}")
+    # Timestamps in US Pacific to match habit "today" and wallpaper date.
+    t = gen_wallpaper.habit_now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[{t}] {msg}")
 
 
 def _timed(label, fn):
@@ -62,7 +86,7 @@ def build_image():
 
     _timed("reload module", lambda: importlib.reload(gen_wallpaper))
 
-    now = datetime.now()
+    now = gen_wallpaper.habit_now()
 
     if MOCK:
         data = _timed("generate mock data", gen_wallpaper.generate_mock_data)
@@ -127,12 +151,35 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         habit_name = params.get("h", [None])[0]
+        key_in_query = bool(params.get("key"))
+        key_header = bool(self.headers.get("X-Api-Key"))
+
+        if API_KEY:
+            supplied = (params.get("key", [None])[0] or "") or (
+                self.headers.get("X-Api-Key") or ""
+            )
+            if not secrets.compare_digest(supplied, API_KEY):
+                _log(
+                    "/mark 401: habit=%r key_from_query=%s key_from_header=%s key_len_matches=%s"
+                    % (
+                        habit_name,
+                        key_in_query,
+                        key_header,
+                        len(supplied) == len(API_KEY) if supplied or API_KEY else True,
+                    )
+                )
+                self._send_json(401, {"error": "Invalid or missing API key"})
+                return
+
         if not habit_name:
             importlib.reload(gen_wallpaper)
             available = [h["name"] for h in gen_wallpaper.HABITS]
+            _log(f"/mark 400: missing ?h=; query keys={list(params.keys())}")
             self._send_json(400, {"error": "Missing ?h= parameter", "available": available})
             return
 
+        client = self.headers.get("X-Forwarded-For") or self.client_address[0]
+        _log(f"/mark: habit={habit_name!r} client={client}")
         result = mark_habit(habit_name)
         self._send_json(200, result)
 
@@ -161,12 +208,18 @@ def main():
     args = parser.parse_args()
     MOCK = args.mock
 
+    _configure_logging()
+
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     _log(f"Serving on http://0.0.0.0:{args.port}")
     _log(f"Mode: {'mock' if MOCK else 'google sheets'}")
+    if API_KEY:
+        _log("API key: required for GET /mark (?key= or X-Api-Key)")
+    else:
+        _log("API key: not set (HABIT_SERVER_API_KEY empty — /mark is open)")
     _log(f"Endpoints:")
     _log(f"  GET /          → wallpaper PNG")
-    _log(f"  GET /mark?h=X  → mark habit X as done")
+    _log(f"  GET /mark?h=X  → toggle habit X for today (0↔1)")
     _log(f"  GET /habits    → list available habits")
     server.serve_forever()
 
